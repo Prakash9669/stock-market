@@ -11,6 +11,8 @@ class WebSocketService {
     this.subscriptionStatus = {}
     this.messageCount = 0
     this.lastMessageTime = null
+    this.reconnectAttempts = 0
+    this.maxReconnectAttempts = 5
   }
 
   // Initialize WebSocket server with an existing HTTP server
@@ -74,21 +76,30 @@ class WebSocketService {
       return
     }
 
+    // Check if we've exceeded reconnection attempts
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(`❌ Max reconnection attempts (${this.maxReconnectAttempts}) exceeded. Stopping reconnections.`)
+      return
+    }
+
     const wsUrl = `wss://smartapisocket.angelone.in/smart-stream?clientCode=${clientCode}&feedToken=${feedToken}&apiKey=${apiKey}`
 
     console.log("🔌 Connecting to Angel Broking WebSocket...")
-    console.log("📋 Connection details:")
-    console.log("   URL:", wsUrl.substring(0, 50) + "...")
-    console.log("   Client Code:", clientCode)
-    console.log("   Feed Token:", feedToken.substring(0, 10) + "...")
-    console.log("   API Key:", apiKey)
+    console.log(`🔄 Reconnection attempt: ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts}`)
 
     this.angelWebSocket = new WebSocket(wsUrl)
 
     this.angelWebSocket.on("open", () => {
       console.log("✅ Connected to Angel Broking WebSocket")
-      console.log("🔄 Starting stock subscriptions...")
-      this.subscribeToStocks()
+      this.reconnectAttempts = 0 // Reset on successful connection
+
+      // Send a heartbeat message first
+      this.sendHeartbeat()
+
+      // Then subscribe to stocks
+      setTimeout(() => {
+        this.subscribeToStocks()
+      }, 1000)
     })
 
     this.angelWebSocket.on("message", async (data) => {
@@ -97,11 +108,19 @@ class WebSocketService {
         this.lastMessageTime = new Date()
 
         console.log(`📨 Message #${this.messageCount} received at ${this.lastMessageTime.toISOString()}`)
+        console.log("📋 Raw message length:", data.length)
         console.log("📋 Raw message:", data.toString())
 
-        const marketData = JSON.parse(data.toString())
-        console.log("📈 Parsed market data:", JSON.stringify(marketData, null, 2))
+        // Try to parse as JSON
+        let marketData
+        try {
+          marketData = JSON.parse(data.toString())
+        } catch (parseError) {
+          console.log("📋 Non-JSON message received:", data.toString())
+          return
+        }
 
+        console.log("📈 Parsed market data:", JSON.stringify(marketData, null, 2))
         await this.processMarketData(marketData)
       } catch (error) {
         console.error("❌ Error processing market data:", error)
@@ -112,15 +131,43 @@ class WebSocketService {
     this.angelWebSocket.on("close", (code, reason) => {
       console.log(`🔌 Angel Broking WebSocket connection closed. Code: ${code}, Reason: ${reason}`)
       this.subscriptionStatus = {}
-      setTimeout(() => {
-        console.log("🔄 Attempting to reconnect...")
-        this.connectToAngelWebSocket(feedToken, clientCode, apiKey)
-      }, 5000)
+
+      // Only reconnect if we haven't exceeded max attempts
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++
+        const delay = Math.min(5000 * this.reconnectAttempts, 30000) // Exponential backoff, max 30s
+
+        setTimeout(() => {
+          console.log(`🔄 Attempting to reconnect in ${delay}ms...`)
+          this.connectToAngelWebSocket(feedToken, clientCode, apiKey)
+        }, delay)
+      } else {
+        console.error("❌ Max reconnection attempts reached. Please check market hours or API status.")
+      }
     })
 
     this.angelWebSocket.on("error", (error) => {
       console.error("❌ Angel Broking WebSocket error:", error)
+
+      if (error.message.includes("429")) {
+        console.error("🚫 Rate limited by Angel Broking. Waiting longer before reconnect...")
+        this.reconnectAttempts += 2 // Penalize rate limiting more
+      }
     })
+  }
+
+  sendHeartbeat() {
+    if (this.angelWebSocket && this.angelWebSocket.readyState === WebSocket.OPEN) {
+      const heartbeat = {
+        action: "heartbeat",
+        params: {
+          timestamp: Date.now(),
+        },
+      }
+
+      console.log("💓 Sending heartbeat to Angel Broking")
+      this.angelWebSocket.send(JSON.stringify(heartbeat))
+    }
   }
 
   subscribeToStocks() {
@@ -132,45 +179,59 @@ class WebSocketService {
     const allStocks = [...STOCK_CONFIG.NSE, ...STOCK_CONFIG.NFO]
     console.log(`📈 Subscribing to ${allStocks.length} stocks...`)
 
+    // Try different subscription modes
+    const modes = [1, 2, 3] // Different data modes
+
     allStocks.forEach((stock, index) => {
       const exchangeType = stock.token.length > 5 ? 2 : 1 // NSE=1, NFO=2
 
-      const subscribeMessage = {
-        action: "subscribe",
-        params: {
-          mode: 1,
-          tokenList: [
-            {
-              exchangeType: exchangeType,
-              tokens: [stock.token],
-            },
-          ],
-        },
-      }
+      // Try mode 1 first (LTP), then mode 2 (Quote), then mode 3 (Snap Quote)
+      modes.forEach((mode, modeIndex) => {
+        const subscribeMessage = {
+          action: "subscribe",
+          params: {
+            mode: mode,
+            tokenList: [
+              {
+                exchangeType: exchangeType,
+                tokens: [stock.token],
+              },
+            ],
+          },
+        }
 
-      console.log(
-        `📈 [${index + 1}/${allStocks.length}] Subscribing to ${stock.symbol} (Token: ${stock.token}, Exchange: ${exchangeType})`,
-      )
-      console.log("📋 Subscription message:", JSON.stringify(subscribeMessage, null, 2))
+        setTimeout(
+          () => {
+            if (this.angelWebSocket && this.angelWebSocket.readyState === WebSocket.OPEN) {
+              console.log(
+                `📈 [${index + 1}/${allStocks.length}] Mode ${mode}: Subscribing to ${stock.symbol} (Token: ${stock.token}, Exchange: ${exchangeType})`,
+              )
+              this.angelWebSocket.send(JSON.stringify(subscribeMessage))
+            }
+          },
+          (index * modes.length + modeIndex) * 200,
+        ) // Stagger subscriptions
+      })
 
-      this.angelWebSocket.send(JSON.stringify(subscribeMessage))
       this.subscriptionStatus[stock.token] = {
         symbol: stock.symbol,
         subscribed: true,
         timestamp: new Date(),
       }
-
-      // Add small delay between subscriptions
-      setTimeout(() => {}, 100 * index)
     })
 
-    console.log("✅ All subscription messages sent")
-    console.log("📊 Subscription status:", this.subscriptionStatus)
+    console.log("✅ All subscription messages queued")
   }
 
   async processMarketData(data) {
     try {
       console.log("🔄 Processing market data:", JSON.stringify(data, null, 2))
+
+      // Handle different message types
+      if (data.action === "heartbeat") {
+        console.log("💓 Heartbeat response received")
+        return
+      }
 
       if (data && data.token) {
         // Find symbol for token
@@ -183,13 +244,13 @@ class WebSocketService {
           const marketDataDoc = new MarketData({
             token: data.token,
             symbol: stock.symbol,
-            ltp: data.ltp || 0,
+            ltp: data.ltp || data.last_traded_price || 0,
             change: data.change || 0,
-            changePercent: data.changePercent || 0,
-            open: data.open || 0,
-            high: data.high || 0,
-            low: data.low || 0,
-            volume: data.volume || 0,
+            changePercent: data.changePercent || data.change_percent || 0,
+            open: data.open || data.open_price || 0,
+            high: data.high || data.high_price || 0,
+            low: data.low || data.low_price || 0,
+            volume: data.volume || data.volume_traded || 0,
           })
 
           console.log("💾 Saving to database:", JSON.stringify(marketDataDoc.toObject(), null, 2))
@@ -231,6 +292,7 @@ class WebSocketService {
       messageCount: this.messageCount,
       lastMessageTime: this.lastMessageTime,
       subscriptionStatus: this.subscriptionStatus,
+      reconnectAttempts: this.reconnectAttempts,
     }
   }
 }
