@@ -1,6 +1,7 @@
 const express = require("express")
 const cors = require("cors")
 const path = require("path")
+const http = require("http")
 require("dotenv").config()
 
 // Import configurations and services
@@ -17,7 +18,6 @@ const routes = require("./routes")
 
 const app = express()
 const PORT = process.env.PORT || 3001
-const WS_PORT = process.env.WS_PORT || 8081
 
 // Middleware
 app.use(cors())
@@ -26,9 +26,6 @@ app.use(logger)
 
 // Connect to database
 connectDB()
-
-// Initialize WebSocket server
-websocketService.initializeClientWebSocketServer(WS_PORT)
 
 // API Routes
 app.use("/api", routes)
@@ -47,8 +44,14 @@ if (process.env.NODE_ENV === "production") {
 // Error handling middleware
 app.use(errorHandler)
 
+// Create HTTP server
+const server = http.createServer(app)
+
+// Initialize WebSocket server with the HTTP server
+websocketService.initializeClientWebSocketServer(server)
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`)
   console.log("🔧 Environment check:")

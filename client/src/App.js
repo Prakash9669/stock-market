@@ -18,19 +18,17 @@ function App() {
 
   // Get WebSocket URL based on environment
   const getWebSocketUrl = () => {
-    if (process.env.NODE_ENV === "production") {
-      // In production, use the same domain with wss protocol
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-      return `${protocol}//${window.location.host}`
-    } else {
-      // In development, use localhost
-      return "ws://localhost:8081"
-    }
+    // In both production and development, use the same host
+    // but with ws/wss protocol instead of http/https
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    return `${protocol}//${window.location.host}`
   }
 
   // Connect to WebSocket
   const connectWebSocket = useCallback(() => {
     const wsUrl = getWebSocketUrl()
+    console.log("Connecting to WebSocket at:", wsUrl)
+
     const ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {

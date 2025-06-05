@@ -7,13 +7,22 @@ class WebSocketService {
     this.angelWebSocket = null
     this.connectedClients = new Set()
     this.wss = null
+    this.server = null
   }
 
-  initializeClientWebSocketServer(port) {
-    // Use the PORT environment variable for WebSocket in production
-    const wsPort = process.env.NODE_ENV === "production" ? process.env.PORT : port
-
-    this.wss = new WebSocket.Server({ port: wsPort })
+  // Initialize WebSocket server with an existing HTTP server
+  initializeClientWebSocketServer(server) {
+    // In production, use the same HTTP server for WebSocket
+    if (process.env.NODE_ENV === "production") {
+      this.server = server
+      this.wss = new WebSocket.Server({ server })
+      console.log("🔌 WebSocket server attached to HTTP server")
+    } else {
+      // In development, use a separate port
+      const wsPort = process.env.WS_PORT || 8081
+      this.wss = new WebSocket.Server({ port: wsPort })
+      console.log(`🔌 WebSocket server running on port ${wsPort}`)
+    }
 
     this.wss.on("connection", (ws) => {
       console.log("👤 Client connected")
@@ -32,8 +41,6 @@ class WebSocketService {
         this.connectedClients.delete(ws)
       })
     })
-
-    console.log(`🔌 WebSocket server running on port ${wsPort}`)
   }
 
   async sendCurrentMarketData(ws) {
