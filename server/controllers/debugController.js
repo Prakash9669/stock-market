@@ -24,6 +24,9 @@ const getDebugInfo = async (req, res) => {
       currentTotp = `Error: ${error.message}`
     }
 
+    // Get WebSocket stats
+    const wsStats = websocketService.getWebSocketStats()
+
     // Check services status
     const debugInfo = {
       timestamp: new Date().toISOString(),
@@ -54,6 +57,9 @@ const getDebugInfo = async (req, res) => {
       websocket: {
         angelWebSocketConnected: websocketService.isAngelWebSocketConnected(),
         connectedClients: websocketService.getConnectedClientsCount(),
+        messageCount: wsStats.messageCount,
+        lastMessageTime: wsStats.lastMessageTime,
+        subscriptionStatus: wsStats.subscriptionStatus,
       },
       environment: {
         nodeEnv: process.env.NODE_ENV,

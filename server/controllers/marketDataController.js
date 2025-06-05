@@ -1,4 +1,6 @@
 const MarketData = require("../models/MarketData")
+const marketDataService = require("../services/marketDataService")
+const angelBrokingService = require("../services/angelBrokingService")
 
 const getMarketData = async (req, res) => {
   try {
@@ -21,24 +23,39 @@ const getMarketDataBySymbol = async (req, res) => {
 
 const getLatestPrices = async (req, res) => {
   try {
-    const latestData = await MarketData.aggregate([
-      {
-        $sort: { timestamp: -1 },
-      },
-      {
-        $group: {
-          _id: "$symbol",
-          latestData: { $first: "$$ROOT" },
-        },
-      },
-      {
-        $replaceRoot: { newRoot: "$latestData" },
-      },
-    ])
-
+    const latestData = await marketDataService.getLatestMarketData()
     res.json({ success: true, data: latestData })
   } catch (error) {
     res.status(500).json({ success: false, message: error.message })
+  }
+}
+
+const fetchFreshData = async (req, res) => {
+  try {
+    if (!angelBrokingService.isAuthenticated()) {
+      return res.status(401).json({
+        success: false,
+        message: "Not authenticated. Please login first.",
+      })
+    }
+
+    const authToken = angelBrokingService.getAuthToken()
+    const mode = req.query.mode || "FULL" // LTP, OHLC, or FULL
+
+    const result = await marketDataService.fetchMarketData(authToken, mode)
+
+    res.json({
+      success: true,
+      message: "Market data fetched successfully",
+      fetchTime: result.fetchTime,
+      recordCount: result.data.data.fetched.length,
+      unfetchedCount: result.data.data.unfetched.length,
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    })
   }
 }
 
@@ -46,4 +63,5 @@ module.exports = {
   getMarketData,
   getMarketDataBySymbol,
   getLatestPrices,
+  fetchFreshData,
 }

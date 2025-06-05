@@ -11,4 +11,7 @@ router.get("/symbol/:symbol", marketDataController.getMarketDataBySymbol)
 // GET /api/market-data/latest
 router.get("/latest", marketDataController.getLatestPrices)
 
+// POST /api/market-data/fetch - Fetch fresh data from Angel Broking
+router.post("/fetch", marketDataController.fetchFreshData)
+
 module.exports = router
